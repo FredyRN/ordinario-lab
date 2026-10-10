@@ -6,6 +6,8 @@
 *.dylib
 *.test
 *.out
+ordinario-lab
+*ordinario-lab
 
 # Build output directories
 /bin/
