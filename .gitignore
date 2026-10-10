@@ -1,3 +1,50 @@
-.vscode/
+# Compiled binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Build output directories
+/bin/
+/build/
+/dist/
+
+# Test and coverage files
+*.test
+*.prof
+coverage.out
+coverage.html
+*.coverprofile
+
+# Dependencies (vendor can be included or not depending on the project)
+vendor/
+
+# Go workspace (Go 1.18+)
+go.work
+go.work.sum
+
+# Environment files
 .env
-ordinaio-lab
+.env.local
+.env.*.local
+
+# IDE / editor configuration
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Delve debugger
+__debug_bin
+__debug_bin*
+debug
+
+# Temporary files
+*.log
+*.tmp
+tmp/
