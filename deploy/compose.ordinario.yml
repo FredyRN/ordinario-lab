@@ -1,0 +1,57 @@
+# compose.ordinario.yml
+# -----------------------------------------------------------------------------
+# "Ordinario" stack (the Go application) — the only service that crosses the
+# isolation boundary. It is attached to BOTH networks:
+#   * nexus_coffee (internal) → talks to postgres/qdrant by container name.
+#   * nexus_public (bridge)   → the only egress/ingress point of the system.
+# This is the "jump host" pattern: the app is the sole bridge between the
+# private services and the outside world.
+#
+# NOTE: filename renamed from compose.app.yml → compose.ordinario.yml.
+# All references in up.sh / down.sh / Makefile / docs updated accordingly.
+# -----------------------------------------------------------------------------
+
+services:
+  app:
+    # Pick one: `build` for local builds, `image` for a prebuilt registry tag.
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    # image: registry.example.com/nexus/agent-hub:latest
+
+    container_name: wl_app
+    restart: unless-stopped
+
+    environment:
+      # DNS inside nexus_coffee resolves container_name → IP.
+      DB_HOST: wl_postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-postgres}
+      DB_NAME: ${DB_NAME:-agent_hub}
+      # App is expected to read the password from this file path.
+      DB_PASSWORD_FILE: /run/secrets/pg_password
+      QDRANT_GRPC_URL: http://wl_qdrant:6334
+      QDRANT_REST_URL: http://wl_qdrant:6333
+
+    secrets:
+      - pg_password
+
+    ports:
+      # The ONLY published port in the whole stack.
+      - "8080:8080"
+
+    networks:
+      # Dual attachment: private (data plane) + public (control plane).
+      - nexus_coffee
+      - nexus_public
+
+networks:
+  nexus_coffee:
+    external: true
+  # Plain bridge with NAT → required for `ports:` to work.
+  nexus_public:
+    external: true
+
+secrets:
+  pg_password:
+    external: true

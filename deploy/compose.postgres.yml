@@ -1,0 +1,62 @@
+# compose.postgres.yml
+# -----------------------------------------------------------------------------
+# Standalone stack for PostgreSQL.
+# Shared resources (nexus_coffee network, pg_password secret) are declared
+# as external because they are created by bootstrap.sh and consumed by other
+# stacks (e.g. compose.ordinario.yml).
+# The pg_data volume is owned by this stack only; run `down -v` to wipe it.
+# No ports are published: this service is reachable only from the internal
+# network nexus_coffee, via the container name wl_postgres.
+# -----------------------------------------------------------------------------
+
+services:
+  postgres:
+    image: docker.io/library/postgres:16-alpine
+    container_name: wl_postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_DB: ${DB_NAME:-agent_hub}
+      # Read the password from a file mounted by podman from the secret,
+      # so it never appears in `podman inspect` or the process environment.
+      POSTGRES_PASSWORD_FILE: /run/secrets/pg_password
+
+    secrets:
+      - pg_password
+
+    volumes:
+      # Named volume for data persistence (owned by this stack).
+      - pg_data:/var/lib/postgresql/data
+      # Init scripts are executed only on first initialization of the cluster.
+      # :Z relabels the SELinux context so the container can read it.
+      - ../migrations:/docker-entrypoint-initdb.d:Z
+
+    healthcheck:
+      # Use container's own env vars so the check stays correct if the user
+      # or DB name is overridden. $$ escapes Compose interpolation.
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      # Give the server time to finish initdb before counting failures.
+      start_period: 10s
+
+    networks:
+      - nexus_coffee
+
+volumes:
+  # Owned by this stack → its full name will be <project>_pg_data,
+  # e.g. nexus-postgres_pg_data when invoked with `-p nexus-postgres`.
+  pg_data:
+
+networks:
+  # Created by bootstrap.sh with `--internal` (no NAT, no gateway).
+  # `external: true` prevents compose from creating/removing it.
+  nexus_coffee:
+    external: true
+
+secrets:
+  # Created by bootstrap.sh with `podman secret create`.
+  pg_password:
+    external: true
