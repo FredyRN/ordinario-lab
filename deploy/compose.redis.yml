@@ -1,0 +1,49 @@
+# compose.redis.yml
+# -----------------------------------------------------------------------------
+# Standalone stack for Redis.
+# Reachable only from nexus_coffee via container name ord_redis (:6379).
+# -----------------------------------------------------------------------------
+
+services:
+  redis:
+    image: docker.io/library/redis:7.4-alpine
+    container_name: ord_redis
+    restart: unless-stopped
+
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        exec redis-server \
+          --appendonly yes \
+          --appendfsync everysec \
+          --maxmemory 256mb \
+          --maxmemory-policy allkeys-lru \
+          --requirepass "$$(cat /run/secrets/redis_password)"
+
+    secrets:
+      - redis_password
+
+    volumes:
+      - redis_data:/data:Z
+
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$(cat /run/secrets/redis_password)\" redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+    networks:
+      - nexus_coffee
+
+volumes:
+  redis_data:
+
+networks:
+  nexus_coffee:
+    external: true
+
+secrets:
+  redis_password:
+    external: true

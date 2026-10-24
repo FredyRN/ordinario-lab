@@ -6,7 +6,7 @@
 # Uses the golang Alpine image so the toolchain version matches go.mod's
 # declared version. Kept in a separate stage so the final image never ships
 # the compiler, module cache, or source tree.
-FROM docker.io/library/golang:1.27.3-alpine AS builder
+FROM docker.io/library/golang:1.27-alpine AS builder
 
 WORKDIR /src
 

@@ -7,6 +7,9 @@
 # -----------------------------------------------------------------------------
 set -euo pipefail
 
-podman-compose -p nexus-app      -f compose.ordinario.yml down
-podman-compose -p nexus-qdrant   -f compose.qdrant.yml    down
-podman-compose -p nexus-postgres -f compose.postgres.yml  down
+cd "$(dirname "$0")"
+
+podman-compose -p nexus-ordinario -f compose.ordinario.yml down
+podman-compose -p nexus-redis     -f compose.redis.yml     down
+podman-compose -p nexus-qdrant    -f compose.qdrant.yml    down
+podman-compose -p nexus-postgres  -f compose.postgres.yml  down

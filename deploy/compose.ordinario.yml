@@ -1,14 +1,11 @@
 # compose.ordinario.yml
 # -----------------------------------------------------------------------------
-# "Ordinario" stack (the Go application) — the only service that crosses the
-# isolation boundary. It is attached to BOTH networks:
-#   * nexus_coffee (internal) → talks to postgres/qdrant by container name.
+# Go application stack — the only service that crosses the isolation boundary.
+# It is attached to BOTH networks:
+#   * nexus_coffee (internal) → talks to ord_postgres, ord_qdrant, ord_redis.
 #   * nexus_public (bridge)   → the only egress/ingress point of the system.
-# This is the "jump host" pattern: the app is the sole bridge between the
-# private services and the outside world.
-#
-# NOTE: filename renamed from compose.app.yml → compose.ordinario.yml.
-# All references in up.sh / down.sh / Makefile / docs updated accordingly.
+# This is the "jump host" pattern: the ordinario app is the sole bridge between
+# the private services and the outside world.
 # -----------------------------------------------------------------------------
 
 services:
@@ -19,39 +16,78 @@ services:
       dockerfile: Dockerfile
     # image: registry.example.com/nexus/agent-hub:latest
 
-    container_name: wl_app
+    container_name: ord_service
     restart: unless-stopped
 
+    env_file:
+      - .env
+
     environment:
-      # DNS inside nexus_coffee resolves container_name → IP.
-      DB_HOST: wl_postgres
+      # 1. General & HTTP Server
+      APP_ENV: ${APP_ENV:-production}
+      APP_PORT: ${APP_PORT:-8080}
+      APP_BASE_DOMAIN: ${APP_BASE_DOMAIN:-localhost}
+      TZ: ${TZ:-UTC}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+
+      # 2. PostgreSQL (Admin migrations & RLS App User)
+      DB_HOST: ord_postgres
       DB_PORT: 5432
-      DB_USER: ${DB_USER:-postgres}
       DB_NAME: ${DB_NAME:-agent_hub}
-      # App is expected to read the password from this file path.
+      DB_SSLMODE: ${DB_SSLMODE:-disable}
+      DB_USER: ${DB_USER:-postgres}
       DB_PASSWORD_FILE: /run/secrets/pg_password
-      QDRANT_GRPC_URL: http://wl_qdrant:6334
-      QDRANT_REST_URL: http://wl_qdrant:6333
+      DB_APP_USER: ${DB_APP_USER:-app_tenant_user}
+      DB_APP_PASSWORD_FILE: /run/secrets/pg_app_password
+      DB_MAX_CONNS: ${DB_MAX_CONNS:-25}
+      DB_MIN_CONNS: ${DB_MIN_CONNS:-5}
+      DB_MAX_CONN_LIFETIME: ${DB_MAX_CONN_LIFETIME:-1h}
+      DB_MAX_CONN_IDLE_TIME: ${DB_MAX_CONN_IDLE_TIME:-30m}
+
+      # 3. Qdrant (Vector Database)
+      QDRANT_HOST: ord_qdrant
+      QDRANT_GRPC_PORT: 6334
+      QDRANT_HTTP_PORT: 6333
+      QDRANT_REST_URL: http://ord_qdrant:6333
+      QDRANT_API_KEY_FILE: /run/secrets/qdrant_api_key
+      QDRANT_COLLECTION_NAME: ${QDRANT_COLLECTION_NAME:-tenants_knowledge_vectors}
+      QDRANT_VECTOR_SIZE: ${QDRANT_VECTOR_SIZE:-1536}
+
+      # 4. Redis (Cache, Debouncer, Locks & Pub/Sub SSE)
+      REDIS_HOST: ord_redis
+      REDIS_PORT: 6379
+      REDIS_DB: ${REDIS_DB:-0}
+      REDIS_PASSWORD_FILE: /run/secrets/redis_password
+      REDIS_DEBOUNCE_WINDOW: ${REDIS_DEBOUNCE_WINDOW:-3s}
+
+      # 5. Security & Encryption
+      APP_MASTER_KEY_FILE: /run/secrets/app_master_key
+      SESSION_SECRET_FILE: /run/secrets/session_secret
+
+      # 6. Channels (Meta WhatsApp Cloud API & Telegram)
+      META_GRAPH_API_VERSION: ${META_GRAPH_API_VERSION:-v21.0}
+      META_GRAPH_BASE_URL: ${META_GRAPH_BASE_URL:-https://graph.facebook.com}
+      META_APP_SECRET_FILE: /run/secrets/meta_app_secret
+      TELEGRAM_API_BASE_URL: ${TELEGRAM_API_BASE_URL:-https://api.telegram.org}
+
+      # 7. LLM, RAG & MCP
+      LLM_DEFAULT_PROVIDER: ${LLM_DEFAULT_PROVIDER:-openai}
+      LLM_DEFAULT_MODEL: ${LLM_DEFAULT_MODEL:-gpt-4o-mini}
+      LLM_EMBEDDING_MODEL: ${LLM_EMBEDDING_MODEL:-text-embedding-3-small}
+      LLM_DEFAULT_API_KEY_FILE: /run/secrets/llm_default_api_key
+      MCP_CLIENT_TIMEOUT: ${MCP_CLIENT_TIMEOUT:-15s}
+      WEBHOOK_DISPATCH_TIMEOUT: ${WEBHOOK_DISPATCH_TIMEOUT:-10s}
+      WEBHOOK_MAX_RETRIES: ${WEBHOOK_MAX_RETRIES:-3}
 
     secrets:
       - pg_password
+      - pg_app_password
+      - qdrant_api_key
+      - redis_password
+      - app_master_key
+      - session_secret
+      - meta_app_secret
+      - llm_default_api_key
 
     ports:
       # The ONLY published port in the whole stack.
-      - "8080:8080"
-
-    networks:
-      # Dual attachment: private (data plane) + public (control plane).
-      - nexus_coffee
-      - nexus_public
-
-networks:
-  nexus_coffee:
-    external: true
-  # Plain bridge with NAT → required for `ports:` to work.
-  nexus_public:
-    external: true
-
-secrets:
-  pg_password:
-    external: true

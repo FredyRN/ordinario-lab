@@ -1,36 +1,42 @@
 # compose.qdrant.yml
 # -----------------------------------------------------------------------------
 # Standalone stack for Qdrant (vector DB).
-# Only depends on the shared internal network nexus_coffee.
-# No ports are published: reachable only from within nexus_coffee,
-# via the container name wl_qdrant (REST :6333, gRPC :6334).
+# Reachable only from nexus_coffee via container name ord_qdrant.
 # -----------------------------------------------------------------------------
 
 services:
   qdrant:
     image: docker.io/qdrant/qdrant:latest
-    container_name: wl_qdrant
+    container_name: ord_qdrant
     restart: unless-stopped
 
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        export QDRANT__SERVICE__API_KEY="$$(cat /run/secrets/qdrant_api_key)"
+        exec ./entrypoint.sh
+
     environment:
-      # Pin the gRPC port explicitly for clarity; it matches the default.
+      QDRANT__SERVICE__HOST: 0.0.0.0
+      QDRANT__SERVICE__HTTP_PORT: 6333
       QDRANT__SERVICE__GRPC_PORT: 6334
+      QDRANT__STORAGE__STORAGE_PATH: /qdrant/storage
+      QDRANT__LOG_LEVEL: INFO
+      QDRANT__TELEMETRY_DISABLED: "true"
+      TZ: UTC
+
+    secrets:
+      - qdrant_api_key
 
     volumes:
-      # Named volume owned by this stack (persists collections/snapshots).
       - qdrant_data:/qdrant/storage:Z
 
     healthcheck:
-      # NOTE: the official qdrant image may not ship `curl`. If the container
-      # stays "unhealthy" for no reason, replace this test with the pure-bash
-      # variant below, or drop the healthcheck entirely.
-      #
-      # test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/6333 || exit 1"]
-      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/6333'"]
       interval: 10s
       timeout: 5s
       retries: 3
-      # Index loading can take a few seconds on cold start.
       start_period: 15s
 
     networks:
@@ -41,4 +47,8 @@ volumes:
 
 networks:
   nexus_coffee:
+    external: true
+
+secrets:
+  qdrant_api_key:
     external: true
