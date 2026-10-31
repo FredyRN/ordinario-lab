@@ -289,6 +289,8 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO app_tenant_user;
 GRANT EXECUTE ON FUNCTION app_current_tenant_id() TO app_tenant_user;
 GRANT EXECUTE ON FUNCTION app_current_agency_id() TO app_tenant_user;
 GRANT EXECUTE ON FUNCTION set_updated_at() TO app_tenant_user;
+GRANT EXECUTE ON FUNCTION validate_tenant_timezone() TO app_tenant_user;
+GRANT EXECUTE ON FUNCTION sync_conversation_on_message() TO app_tenant_user;
 GRANT EXECUTE ON FUNCTION resolve_agency_by_host(TEXT) TO app_tenant_user;
 GRANT EXECUTE ON FUNCTION resolve_inbound_channel_route(TEXT, VARCHAR) TO app_tenant_user;
 GRANT EXECUTE ON FUNCTION resolve_user_for_login(UUID, TEXT) TO app_tenant_user;

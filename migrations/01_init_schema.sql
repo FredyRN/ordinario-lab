@@ -530,8 +530,8 @@ CREATE UNIQUE INDEX idx_messages_external_id_unique
 CREATE INDEX idx_messages_conversation_history
     ON messages(tenant_id, conversation_id, created_at ASC);
 
--- Timeline global por tenant: usado por v_tenant_dashboard_stats (messages_last_24h)
--- y por cualquier consulta de métricas por rango de fechas sin filtrar por conversación
+-- Global per-tenant timeline: used by v_tenant_dashboard_stats (messages_last_24h)
+-- and date-range analytics queries that do not filter by conversation_id
 CREATE INDEX idx_messages_tenant_created
     ON messages(tenant_id, created_at DESC);
 
@@ -575,15 +575,16 @@ BEGIN
     UPDATE conversations
     SET last_message_at = NEW.created_at,
         last_message_preview = CASE NEW.content_type
-            WHEN 'text'     THEN LEFT(NEW.content, 200)
-            WHEN 'image'    THEN '[Image]'
-            WHEN 'audio'    THEN '[Audio]'
-            WHEN 'document' THEN '[Document]'
+            WHEN 'text'      THEN LEFT(NEW.content, 200)
+            WHEN 'image'     THEN '[Image]'
+            WHEN 'audio'     THEN '[Audio]'
+            WHEN 'document'  THEN '[Document]'
             WHEN 'tool_call' THEN '[Tool: ' || COALESCE(NEW.metadata->>'tool_name', 'unknown') || ']'
             ELSE LEFT(NEW.content, 200)
         END,
         unread_count = CASE
-            WHEN NEW.sender_type = 'contact' THEN unread_count + 1
+            WHEN NEW.sender_type = 'contact'        THEN unread_count + 1
+            WHEN NEW.sender_type = 'human_operator' THEN 0
             ELSE unread_count
         END
     WHERE id = NEW.conversation_id

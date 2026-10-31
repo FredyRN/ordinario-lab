@@ -199,8 +199,6 @@ BEGIN
     END IF;
 
     -- 3. Extract routing identifiers (tenant_id, agency_id, primary key)
-
-    -- 3. Extract routing identifiers (tenant_id, agency_id, primary key)
     v_ref_json := COALESCE(v_new_json, v_old_json);
 
     IF v_ref_json ? 'id' THEN
@@ -228,7 +226,7 @@ BEGIN
         v_agency_id := app_current_agency_id();
     END IF;
 
-     -- 4. Marca la sesión como escritor interno de auditoría (solo válida en esta tx)
+    -- 4. Temporarily authorize internal audit insertion for this statement only
     PERFORM set_config('app.audit_internal', 'on', TRUE);
 
     -- 4.1. Insert immutable audit entry
@@ -263,6 +261,9 @@ BEGIN
         v_old_json,
         v_new_json
     );
+
+    -- 4.2. Immediately revoke internal write flag for remaining statements in the tx
+    PERFORM set_config('app.audit_internal', 'off', TRUE);
 
     IF TG_OP = 'DELETE' THEN
         RETURN OLD;
@@ -464,6 +465,7 @@ LEFT JOIN users u_paused
 -- 4.3 View: v_knowledge_base_summary
 -- Purpose: Single-query view for the HTMX RAG management page showing document
 -- ingestion counters, vector chunk totals, and whether the KB is shared or individual.
+-- Uses independent LATERAL aggregations to prevent N:M join fan-out on chunk sums.
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE VIEW v_knowledge_base_summary
 WITH (security_invoker = true)
@@ -482,25 +484,39 @@ SELECT
     kb.score_threshold,
     kb.created_at,
     kb.updated_at,
-    COUNT(DISTINCT rd.id) AS total_documents,
-    COUNT(DISTINCT rd.id) FILTER (WHERE rd.status = 'indexed') AS indexed_documents,
-    COUNT(DISTINCT rd.id) FILTER (WHERE rd.status IN ('pending', 'chunking')) AS processing_documents,
-    COUNT(DISTINCT rd.id) FILTER (WHERE rd.status = 'failed') AS failed_documents,
-    COALESCE(SUM(rd.chunk_count) FILTER (WHERE rd.status = 'indexed'), 0) AS total_indexed_chunks,
-    COUNT(DISTINCT akb.agent_id) AS connected_agents_count,
-    (COUNT(DISTINCT akb.agent_id) > 1) AS is_shared_across_agents,
-    COALESCE(
-        array_agg(DISTINCT a.name) FILTER (WHERE a.name IS NOT NULL),
-        '{}'::VARCHAR[]
-    ) AS connected_agent_names
+    COALESCE(doc_stats.total_documents, 0) AS total_documents,
+    COALESCE(doc_stats.indexed_documents, 0) AS indexed_documents,
+    COALESCE(doc_stats.processing_documents, 0) AS processing_documents,
+    COALESCE(doc_stats.failed_documents, 0) AS failed_documents,
+    COALESCE(doc_stats.total_indexed_chunks, 0) AS total_indexed_chunks,
+    COALESCE(agent_stats.connected_agents_count, 0) AS connected_agents_count,
+    (COALESCE(agent_stats.connected_agents_count, 0) > 1) AS is_shared_across_agents,
+    COALESCE(agent_stats.connected_agent_names, '{}'::VARCHAR[]) AS connected_agent_names
 FROM knowledge_bases kb
-LEFT JOIN rag_documents rd
-    ON rd.kb_id = kb.id AND rd.tenant_id = kb.tenant_id
-LEFT JOIN agent_knowledge_bases akb
-    ON akb.kb_id = kb.id AND akb.tenant_id = kb.tenant_id
-LEFT JOIN agents a
-    ON a.id = akb.agent_id AND a.tenant_id = kb.tenant_id
-GROUP BY kb.id;
+LEFT JOIN LATERAL (
+    SELECT
+        COUNT(*) AS total_documents,
+        COUNT(*) FILTER (WHERE rd.status = 'indexed') AS indexed_documents,
+        COUNT(*) FILTER (WHERE rd.status IN ('pending', 'chunking')) AS processing_documents,
+        COUNT(*) FILTER (WHERE rd.status = 'failed') AS failed_documents,
+        COALESCE(SUM(rd.chunk_count) FILTER (WHERE rd.status = 'indexed'), 0) AS total_indexed_chunks
+    FROM rag_documents rd
+    WHERE rd.kb_id = kb.id
+      AND rd.tenant_id = kb.tenant_id
+) doc_stats ON TRUE
+LEFT JOIN LATERAL (
+    SELECT
+        COUNT(DISTINCT akb.agent_id) AS connected_agents_count,
+        COALESCE(
+            array_agg(DISTINCT a.name) FILTER (WHERE a.name IS NOT NULL),
+            '{}'::VARCHAR[]
+        ) AS connected_agent_names
+    FROM agent_knowledge_bases akb
+    LEFT JOIN agents a
+        ON a.id = akb.agent_id AND a.tenant_id = akb.tenant_id
+    WHERE akb.kb_id = kb.id
+      AND akb.tenant_id = kb.tenant_id
+) agent_stats ON TRUE;
 
 -- -----------------------------------------------------------------------------
 -- 4.4 View: v_tenant_dashboard_stats
@@ -557,9 +573,16 @@ FROM tenants t;
 -- 5. GRANTS FOR APPLICATION RLS ROLE (app_tenant_user)
 -- -----------------------------------------------------------------------------
 
+REVOKE ALL ON FUNCTION app_current_user_id() FROM PUBLIC;
+REVOKE ALL ON FUNCTION app_current_actor_type() FROM PUBLIC;
+REVOKE ALL ON FUNCTION app_current_request_id() FROM PUBLIC;
+REVOKE ALL ON FUNCTION app_current_client_ip() FROM PUBLIC;
+REVOKE ALL ON FUNCTION prevent_audit_log_mutation() FROM PUBLIC;
+REVOKE ALL ON FUNCTION process_audit_log() FROM PUBLIC;
+
 -- Audit logs: SELECT only. INSERT is performed exclusively by the
--- SECURITY DEFINER trigger process_audit_log(), which marks the session
--- with app.audit_internal = 'on' before writing.
+-- SECURITY DEFINER trigger process_audit_log(), which temporarily marks the
+-- statement with app.audit_internal = 'on' before writing.
 GRANT SELECT ON audit_logs TO app_tenant_user;
 
 -- Grant read access on all performance views
@@ -569,10 +592,12 @@ GRANT SELECT ON v_knowledge_base_summary  TO app_tenant_user;
 GRANT SELECT ON v_tenant_dashboard_stats  TO app_tenant_user;
 GRANT SELECT ON v_agency_tenants_overview TO app_tenant_user;
 
--- Grant execution on audit session context functions
-GRANT EXECUTE ON FUNCTION app_current_user_id()    TO app_tenant_user;
-GRANT EXECUTE ON FUNCTION app_current_actor_type() TO app_tenant_user;
-GRANT EXECUTE ON FUNCTION app_current_request_id() TO app_tenant_user;
-GRANT EXECUTE ON FUNCTION app_current_client_ip()  TO app_tenant_user;
+-- Grant execution on audit session context and trigger functions
+GRANT EXECUTE ON FUNCTION app_current_user_id()        TO app_tenant_user;
+GRANT EXECUTE ON FUNCTION app_current_actor_type()     TO app_tenant_user;
+GRANT EXECUTE ON FUNCTION app_current_request_id()     TO app_tenant_user;
+GRANT EXECUTE ON FUNCTION app_current_client_ip()      TO app_tenant_user;
+GRANT EXECUTE ON FUNCTION prevent_audit_log_mutation() TO app_tenant_user;
+GRANT EXECUTE ON FUNCTION process_audit_log()          TO app_tenant_user;
 
 COMMIT;

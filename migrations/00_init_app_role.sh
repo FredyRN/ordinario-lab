@@ -17,23 +17,38 @@ else
     APP_DB_PASS="dev_only_rls_password_change_me"
 fi
 
-psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
-    DO \$\$
+psql -v ON_ERROR_STOP=1 \
+     -v app_user="$APP_DB_USER" \
+     -v app_pass="$APP_DB_PASS" \
+     --username "$POSTGRES_USER" \
+     --dbname "$POSTGRES_DB" <<-'EOSQL'
+    SELECT
+        set_config('init.app_user', :'app_user', false),
+        set_config('init.app_pass', :'app_pass', false);
+
+    DO $$
+    DECLARE
+        v_user TEXT := current_setting('init.app_user');
+        v_pass TEXT := current_setting('init.app_pass');
     BEGIN
-        IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '${APP_DB_USER}') THEN
-            CREATE ROLE ${APP_DB_USER} WITH
-                LOGIN
-                NOINHERIT
-                NOSUPERUSER
-                NOCREATEDB
-                NOCREATEROLE
-                NOBYPASSRLS
-                PASSWORD '${APP_DB_PASS}';
+        IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = v_user) THEN
+            EXECUTE format(
+                'CREATE ROLE %I WITH LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS PASSWORD %L',
+                v_user,
+                v_pass
+            );
         ELSE
-            ALTER ROLE ${APP_DB_USER} WITH PASSWORD '${APP_DB_PASS}';
+            EXECUTE format(
+                'ALTER ROLE %I WITH PASSWORD %L',
+                v_user,
+                v_pass
+            );
         END IF;
     END
-    \$\$;
+    $$;
+
+    RESET init.app_user;
+    RESET init.app_pass;
 EOSQL
 
 echo "✅ Application RLS role '${APP_DB_USER}' initialized."
