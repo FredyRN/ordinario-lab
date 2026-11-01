@@ -50,3 +50,7 @@ debug
 *.log
 *.tmp
 tmp/
+
+# Added by cargo
+
+/target
