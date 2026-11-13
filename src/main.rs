@@ -1,13 +1,16 @@
 fn main() {
-    message("Hola mundo desde una función.");
-    let add: i32 = add_two_numbers(7, 9);
-    println!("{}", add);
+    let add_two_n: i32 = add_two_numbers(3, 6);
+    println!("= {}", add_two_n);
+    let plus_tree_result: i32 = plus_tree(add_two_n);
+    println!("{} plus tree is {}", add_two_n, plus_tree_result);
 }
 
-fn add_two_numbers (x: i32, y: i32) -> i32 {
-    return x + y;
+fn add_two_numbers(x: i32, y: i32) -> i32 {
+    println!("Adding {} to {}", x, y);
+    x + y
 }
 
-fn message(words: &str) {
-    println!("{}", words);
+fn plus_tree(n: i32) -> i32 {
+    println!("Adding 3 to: {}", n);
+    n + 3
 }
